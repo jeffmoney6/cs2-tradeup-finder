@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8" />
+<title>CS2 Trade-Up Finder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2f3a;
+    --text: #e6e8eb;
+    --muted: #8b93a1;
+    --accent: #5b8cff;
+    --good: #3ecf8e;
+    --bad: #ef5b5b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .subtitle { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+  }
+  .controls label {
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  input, select {
+    background: #0f1115;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { color: var(--text); }
+  tr:hover td { background: rgba(255,255,255,0.03); }
+  .roi-pos { color: var(--good); font-weight: 600; }
+  .roi-neg { color: var(--bad); }
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; background: rgba(91,140,255,0.15); color: var(--accent); }
+  .coverage-low { color: var(--bad); }
+  .meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-top: 8px; }
+  .empty { color: var(--muted); padding: 24px; text-align: center; }
+  #detail {
+    position: fixed; top: 0; right: 0; height: 100%; width: 380px;
+    background: var(--panel); border-left: 1px solid var(--border);
+    padding: 20px; overflow-y: auto; transform: translateX(100%);
+    transition: transform 0.15s ease; font-size: 13px;
+  }
+  #detail.open { transform: translateX(0); }
+  #detail h3 { margin-top: 0; }
+  #detail .close { float: right; cursor: pointer; color: var(--muted); }
+  #detail table td, #detail table th { padding: 4px 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+  <h1>CS2 Trade-Up Finder</h1>
+  <div class="subtitle" id="subtitle">Laddar...</div>
+
+  <div class="panel controls">
+    <label>Min ROI %
+      <input type="number" id="minRoi" value="0" step="5" style="width:80px" />
+    </label>
+    <label>Min coverage
+      <input type="number" id="minCoverage" value="0.6" step="0.1" min="0" max="1" style="width:80px" />
+    </label>
+    <label>StatTrak
+      <select id="stattrakFilter">
+        <option value="all">Alla</option>
+        <option value="false">Endast vanliga</option>
+        <option value="true">Endast StatTrak</option>
+      </select>
+    </label>
+    <label>Nivå
+      <select id="tierFilter">
+        <option value="all">Alla</option>
+        <option value="Mil-Spec Grade->Restricted">Mil-Spec -&gt; Restricted</option>
+        <option value="Restricted->Classified">Restricted -&gt; Classified</option>
+        <option value="Classified->Covert">Classified -&gt; Covert</option>
+      </select>
+    </label>
+    <label>Sök collection/skin
+      <input type="text" id="search" placeholder="t.ex. Fever" style="width:180px" />
+    </label>
+  </div>
+
+  <div class="panel" style="padding:0;">
+    <table id="table">
+      <thead>
+        <tr>
+          <th data-key="roiPct">ROI %</th>
+          <th data-key="collection">Collection</th>
+          <th data-key="tier">Nivå</th>
+          <th data-key="inputSkin">Input-skin x10</th>
+          <th data-key="inputWear">Slitage / mål-float</th>
+          <th data-key="cost">Kostnad</th>
+          <th data-key="evNet">EV (netto)</th>
+          <th data-key="profit">Vinst</th>
+          <th data-key="coverage">Datatäckning</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="empty" id="emptyMsg" style="display:none;">Inga träffar med nuvarande filter.</div>
+  </div>
+
+  <div id="detail">
+    <span class="close" onclick="closeDetail()">✕ stäng</span>
+    <h3 id="detailTitle"></h3>
+    <div id="detailBody"></div>
+  </div>
+
+<script>
+let allResults = [];
+let sortKey = 'roiPct';
+let sortDir = -1;
+
+async function load() {
+  try {
+    const res = await fetch('../output/opportunities.json');
+    if (!res.ok) throw new Error(res.status);
+    const data = await res.json();
+    allResults = data.results || [];
+    const d = new Date(data.generatedAt);
+    document.getElementById('subtitle').textContent =
+      `${allResults.length} möjligheter · genererad ${d.toLocaleString('sv-SE')} · källa: ${data.priceMeta?.source || '?'}` +
+      (data.priceMeta?.source === 'mock' ? '  ⚠️ PÅHITTADE TESTPRISER, inte skarpa siffror' : '');
+    render();
+  } catch (e) {
+    document.getElementById('subtitle').textContent =
+      'Kunde inte ladda output/opportunities.json — kör "node scripts/run.js" (eller "--mock" för test) först.';
+  }
+}
+
+function applyFilters() {
+  const minRoi = parseFloat(document.getElementById('minRoi').value) || 0;
+  const minCoverage = parseFloat(document.getElementById('minCoverage').value) || 0;
+  const st = document.getElementById('stattrakFilter').value;
+  const tier = document.getElementById('tierFilter').value;
+  const search = document.getElementById('search').value.toLowerCase();
+
+  return allResults.filter((r) => {
+    if ((r.roiPct ?? -Infinity) < minRoi) return false;
+    if (r.coverage < minCoverage) return false;
+    if (st !== 'all' && String(r.stattrak) !== st) return false;
+    if (tier !== 'all' && r.tier !== tier) return false;
+    if (search && !(`${r.collection} ${r.inputSkin}`.toLowerCase().includes(search))) return false;
+    return true;
+  });
+}
+
+function render() {
+  const rows = applyFilters().sort((a, b) => {
+    const av = a[sortKey] ?? -Infinity;
+    const bv = b[sortKey] ?? -Infinity;
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return 0;
+  });
+
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
+  document.getElementById('emptyMsg').style.display = rows.length ? 'none' : 'block';
+
+  rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    tr.style.cursor = 'pointer';
+    tr.onclick = () => showDetail(r);
+    tr.innerHTML = `
+      <td class="${r.roiPct >= 0 ? 'roi-pos' : 'roi-neg'}">${r.roiPct?.toFixed(1)}%</td>
+      <td>${r.collection}</td>
+      <td><span class="tag">${r.tier.replace('->', ' → ')}</span>${r.stattrak ? ' <span class="tag">ST</span>' : ''}</td>
+      <td>${r.inputSkin}</td>
+      <td>${r.inputWear}<br><span style="color:var(--muted)">float ≈ ${r.inputFloat}</span></td>
+      <td>${r.cost.toFixed(2)}</td>
+      <td>${r.evNet.toFixed(2)}</td>
+      <td>${r.profit.toFixed(2)}</td>
+      <td class="${r.coverage < 0.8 ? 'coverage-low' : ''}">${(r.coverage * 100).toFixed(0)}%</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function showDetail(r) {
+  document.getElementById('detailTitle').textContent = `${r.collection} — ${r.tier.replace('->', ' → ')}`;
+  const rowsHtml = r.breakdown
+    .map(
+      (b) => `<tr><td>${b.name}</td><td>${b.wear}</td><td>${b.float.toFixed(3)}</td><td>${b.price ?? '—'}</td></tr>`,
+    )
+    .join('');
+  document.getElementById('detailBody').innerHTML = `
+    <p><b>10x</b> ${r.inputSkin} (${r.inputWear}, float ≈ ${r.inputFloat})${r.stattrak ? ' — StatTrak' : ''}</p>
+    <p>Kostnad: <b>${r.cost.toFixed(2)}</b> &nbsp;|&nbsp; EV netto: <b>${r.evNet.toFixed(2)}</b> &nbsp;|&nbsp; Vinst: <b>${r.profit.toFixed(2)}</b></p>
+    <p>Möjliga outputs (${r.outputCount} st, likformig sannolikhet var):</p>
+    <table><thead><tr><th>Skin</th><th>Slitage</th><th>Float</th><th>Pris</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+  `;
+  document.getElementById('detail').classList.add('open');
+}
+function closeDetail() {
+  document.getElementById('detail').classList.remove('open');
+}
+
+document.querySelectorAll('th[data-key]').forEach((th) => {
+  th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    if (sortKey === key) sortDir *= -1;
+    else { sortKey = key; sortDir = -1; }
+    render();
+  });
+});
+['minRoi', 'minCoverage', 'stattrakFilter', 'tierFilter', 'search'].forEach((id) =>
+  document.getElementById(id).addEventListener('input', render),
+);
+
+load();
+</script>
+</body>
+</html>

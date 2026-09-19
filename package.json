@@ -1,0 +1,17 @@
+{
+  "name": "cs2-tradeup-finder",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hittar de mest lönsamma CS2 trade-up-kombinationerna baserat på aktuella Skinport-priser.",
+  "type": "commonjs",
+  "scripts": {
+    "fetch-data": "node scripts/fetch-raw-data.js",
+    "build-data": "node scripts/build-collections.js",
+    "scan": "node scripts/run.js",
+    "scan:mock": "node scripts/run.js --mock",
+    "test": "node scripts/test-ev-calculator.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
